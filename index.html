@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Neon Dash — Platformer</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; overflow:hidden; background:#0a0a14; touch-action:none;
+    font-family:'Courier New',monospace; -webkit-user-select:none; user-select:none; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { display:block; image-rendering:auto; touch-action:none; }
+  #touch { position:fixed; inset:0; pointer-events:none; display:none; }
+  .tbtn { position:absolute; bottom:max(18px, env(safe-area-inset-bottom)); width:72px; height:72px;
+    border-radius:50%; background:rgba(255,255,255,.08); border:2px solid rgba(255,255,255,.25);
+    pointer-events:auto; display:flex; align-items:center; justify-content:center;
+    color:#fff; font-size:26px; backdrop-filter:blur(2px); }
+  .tbtn:active, .tbtn.on { background:rgba(255,255,255,.28); }
+  #btnL { left:max(16px, env(safe-area-inset-left)); }
+  #btnR { left:calc(max(16px, env(safe-area-inset-left)) + 86px); }
+  #btnJ { right:max(16px, env(safe-area-inset-right)); width:86px; height:86px; font-size:30px; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div id="touch">
+  <div class="tbtn" id="btnL">◀</div>
+  <div class="tbtn" id="btnR">▶</div>
+  <div class="tbtn" id="btnJ">▲</div>
+</div>
+<script>
+"use strict";
+// ============================================================ Neon Dash
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W = 960, H = 540;
+let scale = 1;
+function fit() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  scale = Math.min(window.innerWidth / W, window.innerHeight / H);
+  cv.style.width = (W * scale) + 'px'; cv.style.height = (H * scale) + 'px';
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+}
+window.addEventListener('resize', fit); fit();
+
+const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+if (isTouch) document.getElementById('touch').style.display = 'block';
+
+// ------------------------------------------------ levels (tile maps)
+// # solid  = coin  ^ spike  o start  D door  x enemy  - crumble? (not used)  P platform
+const LEVELS = [
+ { name:"Purple Dusk", sky:["#2a1a4a","#120a24"], ground:"#3d2a6e", glow:"#b06cff", accent:"#ffd54a",
+   map:[
+   "                                                                ",
+   "                                                                ",
+   "                          =                                     ",
+   "                    =     #        o  ###                       ",
+   "                                        #                       ",
+   "        ==                       x      ####          ==        ",
+   "                                     ######                     ",
+   "   o         ==            ###                          D       ",
+   " #####   ##      ###     ######    ^    ######      ##  ####    ",
+   " #####   ##  ^   ###  ^  ######   ###   ######  ^^  ##  ####    ",
+   "#####^^###^^#####^#####^########^^#####^#####^^##^^#############" ],
+ },
+ { name:"Deep Blue", sky:["#0d1b3d","#060a18"], ground:"#1e3a6e", glow:"#4ab8ff", accent:"#ffd54a",
+   map:[
+   "                                                                ",
+   "                                                                ",
+   "                    ==                        ==                 ",
+   "            ==     ####      o                   ####            ",
+   "                          ###                    ##             ",
+   "       x                  ####          ==       ##      ==     ",
+   "        ####     ==       ####                            ####  ",
+   "  o                  ###  ####     ###          D       #####   ",
+   " ####    ###  ^      ###  ####  ^  ###   ^^  ## ####    #####   ",
+   " #### ^^ ### ^^ ###  ###  ####  ## ###  ^## ^## #### ^^ #####   ",
+   "#####################^####^#####^^##############^####^^#########" ],
+ },
+ { name:"Magenta Dusk", sky:["#4a1030","#180612"], ground:"#7a1e4a", glow:"#ff5aa0", accent:"#ffd54a",
+   map:[
+   "                                                                ",
+   "          ==                  ==                                ",
+   "                 ==      ####        o  ##                      ",
+   "        ==     ####      ####         #####                     ",
+   "              ######     ####         #####                     ",
+   "   x          ######     ####  ==     #####           ==        ",
+   "    ####  ==  ######     ####      x  #####     ##     ####     ",
+   "  o         #####^^##    ####       #####      ###  D  ####     ",
+   " ####  ##   ############ ####  ^^   #####   ^^ ### ##### ####   ",
+   " #### ^## ^ ############ #### ^## ^ #####  ^## ###^####^^####   ",
+   "############^^#############^^##################^^###############" ],
+ },
+ { name:"Dark Red", sky:["#3d0d0d","#140404"], ground:"#6e1e1e", glow:"#ff4a4a", accent:"#ffd54a",
+   map:[
+   "                                                                ",
+   "         ==         ==              ==                          ",
+   "                ==        o  ===                                ",
+   "      ==    ####      ###########                               ",
+   "           ######     ###########      ==                       ",
+   "     x     ######     ###########          x          ==        ",
+   "    ####  ######  ==  ###########      ######         ####      ",
+   "  o        ######     ###########  ^^  ######    D    ####      ",
+   " ####  ##  ######  ^^ ###########  ##  ######  #####  ####  ##  ",
+   " #### ^##^ ###### ^##^###########^##^^ ###### ^#####^####^^##^  ",
+   "#####^^##^^######^##^^###########^##^^^######^^#####^####^^##^^#" ],
+ },
+];
+// parse maps: o=start, D=door, #=solid, ==two-char platform, ^=spike, x=enemy, spaces empty
+const TILE = 48;
+function parseLevel(L) {
+  const solids = [], coins = [], spikes = [], enemies = [];
+  let start = null, door = null;
+  L.map.forEach((row, r) => {
+    for (let c = 0; c < row.length; c++) {
+      const ch = row[c], x = c * TILE, y = r * TILE;
+      if (ch === '#') solids.push({x, y, w:TILE, h:TILE});
+      else if (ch === '=') solids.push({x, y, w:TILE, h:TILE * 0.35, thin:true});
+      else if (ch === '=') {}
+      else if (ch === '=') {}
+      else if (ch === '=') {}
+      else if (ch === 'o') start = {x: x + 8, y: y + TILE - 56};
+      else if (ch === 'D') door = {x, y, w:TILE, h:TILE};
+      else if (ch === '^') spikes.push({x: x + 6, y: y + TILE - 18, w: TILE - 12, h: 18});
+      else if (ch === 'x') enemies.push({x: x + 6, y: y + TILE - 34, w: 36, h: 34, dir: 1, dead: 0, x0: x + 6});
+      else if (ch === 'c') coins.push({x: x + TILE/2, y: y + TILE/2});
+    }
+  });
+  // auto-coins: place above '=' platforms without explicit coins — add floating coins
+  L.map.forEach((row, r) => {
+    for (let c = 0; c < row.length; c++) {
+      if (row[c] === '=' && !coins.some(k => Math.abs(k.x - (c*TILE+TILE/2)) < 4 && Math.abs(k.y - (r*TILE - TILE*0.5)) < 4))
+        coins.push({x: c*TILE + TILE/2, y: r*TILE - TILE*0.5});
+    }
+  });
+  return {solids, coins, spikes, enemies, start, door};
+}
+
+// ------------------------------------------------ input
+const keys = {};
+window.addEventListener('keydown', e => {
+  if (['Space','ArrowUp','ArrowLeft','ArrowRight','ArrowDown'].includes(e.code)) e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+const touch = {L:false, R:false, J:false};
+function bindBtn(id, prop) {
+  const el = document.getElementById(id);
+  const on = e => { e.preventDefault(); touch[prop] = true; el.classList.add('on'); };
+  const off = e => { e.preventDefault(); touch[prop] = false; el.classList.remove('on'); };
+  el.addEventListener('touchstart', on, {passive:false});
+  el.addEventListener('touchend', off, {passive:false});
+  el.addEventListener('touchcancel', off, {passive:false});
+}
+bindBtn('btnL','L'); bindBtn('btnR','R'); bindBtn('btnJ','J');
+cv.addEventListener('pointerdown', e => {
+  if (state === 'title') startRun();
+  else if (state === 'dead') { state = 'title'; initTitle(); }
+});
+
+// ------------------------------------------------ game state
+const GRAV = 0.55, JUMP_V = -12.5, MOVE = 4.6, MAXFALL = 14;
+const P = { x:0, y:0, vx:0, vy:0, w:30, h:44, grounded:false, jumps:0, face:1,
+  coyote:0, jumpHeld:false, anim:0, squash:0, trail:[] };
+let state = 'title'; // title | play | levelclear | dead | win | pause
+let levelIdx = 0, L = null, cam = {x:0, y:0};
+let coins = [], enemies = [], spikes = [], solids = [], door = null, levelW = 0;
+let coinCount = 0, coinTotal = 0, lives = 2, totalCoins = 0, deaths = 0, t0 = 0, elapsed = 0;
+let particles = [], shake = 0, flash = 0, jumpWasDown = false;
+let msgTimer = 0, msg = '';
+const worldH = LEVELS[0].map.length * TILE; // 11 rows * 48 = 528
+
+function loadLevel(i, keepStats) {
+  levelIdx = i;
+  const lv = LEVELS[i];
+  const p = parseLevel(lv);
+  solids = p.solids; spikes = p.spikes; enemies = p.enemies; door = p.door;
+  coins = p.coins.map(c => ({...c, taken:false, t:Math.random()*6}));
+  coinTotal = coins.length; coinCount = 0;
+  levelW = Math.max(...L ? L : []) || 0; // unused
+  levelW = lv.map[0].length * TILE;
+  P.x = p.start.x; P.y = p.start.y; P.vx = 0; P.vy = 0; P.jumps = 0; P.trail = [];
+  cam.x = Math.max(0, Math.min(P.x - W/2, levelW - W));
+  particles = []; shake = 0; flash = 0;
+  if (!keepStats) { /* per-level reset handled by caller */ }
+}
+
+function startRun() {
+  totalCoins = 0; deaths = 0; t0 = performance.now();
+  lives = 2;
+  loadLevel(0);
+  state = 'play';
+}
+
+function initTitle() { state = 'title'; }
+
+function togglePause() {
+  if (state === 'play') state = 'pause';
+  else if (state === 'pause') state = 'play';
+}
+
+function respawn() {
+  deaths++;
+  lives--;
+  if (levelIdx === 0) { startRun(); return; }
+  if (lives <= 0) { // back to level 1
+    lives = 2;
+    loadLevel(0);
+    msg = 'Balik ke Level 1!'; msgTimer = 90;
+  } else {
+    loadLevel(levelIdx, true);
+    msg = lives + ' nyawa tersisa!'; msgTimer = 90;
+  }
+  state = 'play';
+}
+
+// ------------------------------------------------ physics helpers
+function rectHit(a, b) { return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+
+function update(dt) {
+  if (state !== 'play') return;
+  elapsed = (performance.now() - t0) / 1000;
+  const left = keys['ArrowLeft'] || keys['KeyA'] || touch.L;
+  const right = keys['ArrowRight'] || keys['KeyD'] || touch.R;
+  const jump = keys['Space'] || keys['KeyW'] || keys['ArrowUp'] || touch.J;
+
+  // horizontal
+  if (left && !right) { P.vx = -MOVE; P.face = -1; }
+  else if (right && !left) { P.vx = MOVE; P.face = 1; }
+  else P.vx *= 0.6;
+  P.x += P.vx;
+
+  // jump: coyote time + double jump + variable height
+  const jumpDown = jump && !jumpWasDown;
+  if (P.grounded) { P.coyote = 8; P.jumps = 0; }
+  if (P.coyote > 0) P.coyote--;
+  if (jumpDown && (P.coyote > 0 || P.jumps < 2)) {
+    if (P.coyote <= 0) { // double jump
+      P.vy = JUMP_V * 0.92;
+      spawnParticles(P.x + P.w/2, P.y + P.h, 8, '#9ad1ff', 2);
+    } else P.vy = JUMP_V;
+    P.jumps = P.grounded ? 1 : 2;
+    P.coyote = 0; P.grounded = false; P.squash = -0.3;
+    jumpWasDown = true;
+  }
+  if (!jump && P.vy < -4) P.vy += GRAV * 0.6; // released early: cut jump
+  jumpWasDown = jump;
+
+  P.vy = Math.min(P.vy + GRAV, MAXFALL);
+  P.y += P.vy;
+
+  // collide solids
+  P.grounded = false;
+  for (const s of solids) {
+    if (!rectHit(P, s)) continue;
+    if (P.vy > 0 && P.y + P.h - P.vy <= s.y + 2) { // landing
+      P.y = s.y - P.h; P.vy = 0; P.grounded = true; P.jumps = 0;
+      if (P.squash < 0) P.squash = 0.25;
+    } else if (P.vy < 0 && P.y - P.vy >= s.y + s.h - 2) { // head bump
+      P.y = s.y + s.h; P.vy = 1;
+    } else if (P.vx > 0 && P.x + P.w - P.vx <= s.x + 2) { P.x = s.x - P.w; P.vx = 0; }
+    else if (P.vx < 0 && P.x - P.vx >= s.x + s.w - 2) { P.x = s.x + s.w; P.vx = 0; }
+  }
+
+  // world bounds
+  if (P.x < 0) { P.x = 0; P.vx = 0; }
+  if (P.x + P.w > levelW) { P.x = levelW - P.w; P.vx = 0; }
+  if (P.y > worldH + 200) { spawnParticles(P.x, worldH - 20, 14, '#ff5a5a', 3); shake = 10; state = 'dead'; setTimeout(respawn, 650); return; }
+
+  // spikes
+  for (const s of spikes) {
+    if (rectHit(P, {x:s.x, y:s.y, w:s.w, h:s.h})) {
+      spawnParticles(P.x, P.y, 14, '#ff5a5a', 3); shake = 10; flash = 0.5;
+      state = 'dead'; setTimeout(respawn, 650); return;
+    }
+  }
+
+  // coins
+  for (const c of coins) {
+    if (!c.taken && Math.abs(c.x - (P.x + P.w/2)) < 30 && Math.abs(c.y - (P.y + P.h/2)) < 34) {
+      c.taken = true; coinCount++; totalCoins++;
+      spawnParticles(c.x, c.y, 10, '#ffd54a', 2);
+    }
+  }
+
+  // enemies: patrol + stomp
+  for (const e of enemies) {
+    if (e.dead) { e.dead++; continue; }
+    e.x += e.dir * 1.3;
+    if (Math.abs(e.x - e.x0) > 110) { e.dir *= -1; e.x = e.x0 + 110 * e.dir * (e.dir > 0 ? 1 : -1); }
+    const box = {x:e.x, y:e.y, w:e.w, h:e.h};
+    if (rectHit(P, box)) {
+      if (P.vy > 2 && P.y + P.h - P.vy <= e.y + 10) { // stomp
+        e.dead = 1; P.vy = -9; shake = 6;
+        spawnParticles(e.x + e.w/2, e.y + e.h/2, 16, '#8aff8a', 3);
+        totalCoins += 0; msg = '+100 stomp!'; msgTimer = 60;
+      } else {
+        spawnParticles(P.x, P.y, 14, '#ff5a5a', 3); shake = 10; flash = 0.5;
+        state = 'dead'; setTimeout(respawn, 650); return;
+      }
+    }
+  }
+
+  // door: needs all coins
+  if (door && coinCount >= coinTotal && rectHit(P, door)) {
+    spawnParticles(door.x + door.w/2, door.y + door.h/2, 30, LEVELS[levelIdx].glow, 4);
+    flash = 0.8;
+    if (levelIdx < LEVELS.length - 1) { state = 'levelclear'; lives = 2; setTimeout(() => { loadLevel(levelIdx + 1); state = 'play'; }, 1200); }
+    else { state = 'win'; }
+    return;
+  }
+
+  // camera
+  const target = Math.max(0, Math.min(P.x + P.w/2 - W/2, levelW - W));
+  cam.x += (target - cam.x) * 0.12;
+  cam.y = 0;
+  P.anim += Math.abs(P.vx) * 0.08;
+  P.squash *= 0.85;
+  if (Math.abs(P.vx) > 2 && P.grounded && Math.random() < 0.3)
+    spawnParticles(P.x + P.w/2 - P.face*10, P.y + P.h - 2, 1, '#ffffff55', 1);
+  for (const c of coins) c.t += 0.08;
+}
+
+function spawnParticles(x, y, n, color, speed) {
+  for (let i = 0; i < n; i++) particles.push({
+    x, y, vx:(Math.random()-0.5)*speed*2, vy:(Math.random()-0.7)*speed*2,
+    life: 30 + Math.random()*20, color, size: 2 + Math.random()*3 });
+}
+
+function updateParticles() {
+  particles = particles.filter(p => p.life > 0);
+  for (const p of particles) { p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life--; }
+}
+
+// ------------------------------------------------ render
+function rr(x, y, w, h, r) {
+  ctx.beginPath(); ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
+}
+
+function draw() {
+  const lv = LEVELS[Math.min(levelIdx, LEVELS.length-1)];
+  // sky
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, lv.sky[0]); g.addColorStop(1, lv.sky[1]);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // stars
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 60; i++) {
+    const sx = ((i * 137.5 + levelIdx * 53) % (W + 40)) - cam.x * 0.2;
+    const sy = (i * 79.3) % (H * 0.55);
+    ctx.globalAlpha = 0.25 + 0.35 * Math.sin(i * 3.7 + performance.now() / 900);
+    ctx.fillRect(((sx % W) + W) % W, sy, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+  // moon
+  ctx.fillStyle = lv.glow; ctx.globalAlpha = 0.9;
+  ctx.beginPath(); ctx.arc(W - 130 - cam.x*0.1, 90, 38, 0, 7); ctx.fill();
+  ctx.globalAlpha = 0.18;
+  ctx.beginPath(); ctx.arc(W - 130 - cam.x*0.1, 90, 60, 0, 7); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  if (state === 'title') { drawTitle(lv); return; }
+
+  ctx.save();
+  if (shake > 0) { ctx.translate((Math.random()-0.5)*shake, (Math.random()-0.5)*shake); shake *= 0.85; }
+  ctx.translate(-cam.x, 0);
+
+  // solids
+  for (const s of solids) {
+    if (s.x - cam.x < -TILE*2 || s.x - cam.x > W + TILE*2) continue;
+    if (s.thin) {
+      ctx.fillStyle = lv.glow; ctx.globalAlpha = 0.85;
+      rr(s.x, s.y, s.w, s.h, 4); ctx.fill();
+      ctx.globalAlpha = 0.3; ctx.fillRect(s.x + 4, s.y + s.h, s.w - 8, 8);
+      ctx.globalAlpha = 1;
+    } else {
+      ctx.fillStyle = lv.ground;
+      ctx.fillRect(s.x, s.y, s.w, s.h);
+      ctx.fillStyle = 'rgba(255,255,255,.14)';
+      ctx.fillRect(s.x, s.y, s.w, 4);
+      ctx.fillStyle = 'rgba(0,0,0,.25)';
+      ctx.fillRect(s.x, s.y + s.h - 5, s.w, 5);
+    }
+  }
+  // spikes
+  ctx.fillStyle = '#d8d8e8';
+  for (const s of spikes) {
+    if (s.x - cam.x < -TILE*2 || s.x - cam.x > W + TILE*2) continue;
+    for (let i = 0; i < 3; i++) {
+      const bx = s.x + i * (s.w / 3);
+      ctx.beginPath(); ctx.moveTo(bx, s.y + s.h);
+      ctx.lineTo(bx + s.w/6, s.y); ctx.lineTo(bx + s.w/3, s.y + s.h); ctx.fill();
+    }
+  }
+  // door
+  if (door) {
+    const open = coinCount >= coinTotal;
+    ctx.save();
+    ctx.shadowColor = lv.glow; ctx.shadowBlur = open ? 26 : 8;
+    ctx.fillStyle = open ? lv.glow : '#3a3a52';
+    rr(door.x + 4, door.y + 4, door.w - 8, door.h - 4, 16); ctx.fill();
+    if (open) {
+      ctx.fillStyle = 'rgba(255,255,255,.9)';
+      ctx.font = 'bold 15px monospace'; ctx.textAlign = 'center';
+      ctx.fillText('EXIT', door.x + door.w/2, door.y + 8 - 10);
+    }
+    ctx.restore();
+  }
+  // coins
+  for (const c of coins) {
+    if (c.taken || c.x - cam.x < -40 || c.x - cam.x > W + 40) continue;
+    const bob = Math.sin(c.t) * 4;
+    ctx.save(); ctx.translate(c.x, c.y + bob);
+    ctx.fillStyle = lv.accent;
+    ctx.beginPath(); ctx.ellipse(0, 0, 9 * Math.abs(Math.cos(c.t * 0.7)) + 3, 11, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.ellipse(0, 0, 9 * Math.abs(Math.cos(c.t * 0.7)) + 3, 11, 0, 0, 7); ctx.stroke();
+    ctx.restore();
+  }
+  // enemies
+  for (const e of enemies) {
+    if (e.x - cam.x < -60 || e.x - cam.x > W + 60) continue;
+    ctx.save(); ctx.translate(e.x + e.w/2, e.y + e.h/2);
+    if (e.dead) {
+      ctx.globalAlpha = Math.max(0, 1 - e.dead / 14);
+      ctx.scale(1 + e.dead * 0.06, Math.max(0.1, 1 - e.dead * 0.08));
+    }
+    ctx.fillStyle = '#7dff9a';
+    rr(-e.w/2, -e.h/2, e.w, e.h, 12); ctx.fill();
+    ctx.fillStyle = '#0a1a0a';
+    const eb = Math.sin(performance.now()/300) * 2;
+    ctx.fillRect(-10, -6 + eb, 6, 7); ctx.fillRect(4, -6 + eb, 6, 7);
+    ctx.restore();
+  }
+  // player trail
+  for (let i = 0; i < P.trail.length; i++) {
+    const t = P.trail[i];
+    ctx.globalAlpha = (i / P.trail.length) * 0.25;
+    ctx.fillStyle = lv.glow;
+    rr(t.x, t.y, P.w, P.h, 8); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // player
+  if (state !== 'dead') {
+    const sq = P.squash;
+    ctx.save();
+    ctx.translate(P.x + P.w/2, P.y + P.h);
+    ctx.scale(1 - sq, 1 + sq);
+    ctx.shadowColor = lv.glow; ctx.shadowBlur = 18;
+    ctx.fillStyle = '#f5f7ff';
+    rr(-P.w/2, -P.h, P.w, P.h, 9); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = lv.sky[1];
+    // eyes
+    const blink = (performance.now() % 4000) < 150;
+    if (!blink) { ctx.fillRect(P.face > 0 ? 2 : -9, -P.h + 12, 7, 8); ctx.fillRect(P.face > 0 ? 11 : -2, -P.h + 12, 7, 8); }
+    else { ctx.fillRect(P.face > 0 ? 2 : -9, -P.h + 16, 7, 2); ctx.fillRect(P.face > 0 ? 11 : -2, -P.h + 16, 7, 2); }
+    // feet animation
+    const ph = Math.sin(P.anim) * 3;
+    ctx.fillStyle = '#c8d0ff';
+    ctx.fillRect(-10, -4 + (P.grounded ? ph : 0), 8, 6);
+    ctx.fillRect(2, -4 + (P.grounded ? -ph : 0), 8, 6);
+    ctx.restore();
+  }
+  // particles
+  for (const p of particles) {
+    ctx.globalAlpha = Math.min(1, p.life / 24);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  if (flash > 0) { ctx.fillStyle = `rgba(255,255,255,${flash})`; ctx.fillRect(0,0,W,H); flash -= 0.06; }
+  drawHUD(lv);
+  if (msgTimer > 0) {
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 26px monospace'; ctx.textAlign = 'center';
+    ctx.globalAlpha = Math.min(1, msgTimer / 30);
+    ctx.fillText(msg, W/2, 150); ctx.globalAlpha = 1;
+    msgTimer--;
+  }
+  if (state === 'levelclear') drawOverlay('LEVEL CLEAR!', '→ next: ' + LEVELS[levelIdx+1].name, lv.glow);
+  if (state === 'win') drawWin();
+  if (state === 'dead') drawOverlay('KENA!', 'coba lagi...', '#ff5a5a');
+  if (state === 'pause') drawOverlay('PAUSE', 'esc / P untuk lanjut', '#9ad1ff');
+}
+
+function drawHUD(lv) {
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; rr(14, 12, 210, 40, 10); ctx.fill();
+  ctx.fillStyle = lv.accent; ctx.font = 'bold 20px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('◉ ' + coinCount + '/' + coinTotal, 30, 39);
+  ctx.fillStyle = '#fff';
+  ctx.fillText('LV ' + (levelIdx+1), 130, 39);
+  // lives hearts
+  for (let i = 0; i < 2; i++) {
+    ctx.fillStyle = i < lives ? '#ff6b9d' : '#3a3a52';
+    ctx.font = '18px monospace'; ctx.fillText('♥', W - 66 + i*22, 40);
+  }
+}
+
+function drawTitle(lv) {
+  ctx.textAlign = 'center';
+  ctx.fillStyle = lv.glow;
+  ctx.font = 'bold 64px monospace';
+  ctx.shadowColor = lv.glow; ctx.shadowBlur = 30;
+  ctx.fillText('NEON DASH', W/2, 190);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff';
+  ctx.font = '18px monospace';
+  ctx.fillText('4 level · kumpulin semua koin · stomp musuhnya · capai pintu EXIT', W/2, 240);
+  ctx.fillStyle = '#aab';
+  ctx.font = '15px monospace';
+  if (isTouch) ctx.fillText('Tombol ◀ ▶ buat jalan · ▲ buat lompat (tekan 2× = lompat ganda)', W/2, 285);
+  else ctx.fillText('← → / A D jalan  ·  SPASI / W lompat (hold = lebih tinggi, tekan lagi = lompat ganda)  ·  P pause', W/2, 285);
+  ctx.fillStyle = lv.accent;
+  ctx.font = 'bold 24px monospace';
+  const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 300);
+  ctx.globalAlpha = pulse;
+  ctx.fillText(isTouch ? 'TAP UNTUK MULAI' : 'TEKAN SPASI / KLIK UNTUK MULAI', W/2, 360);
+  ctx.globalAlpha = 1;
+}
+
+function drawOverlay(t, s, color) {
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = color; ctx.font = 'bold 54px monospace';
+  ctx.shadowColor = color; ctx.shadowBlur = 24;
+  ctx.fillText(t, W/2, H/2 - 20); ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff'; ctx.font = '20px monospace';
+  ctx.fillText(s, W/2, H/2 + 30);
+}
+
+function drawWin() {
+  ctx.fillStyle = 'rgba(0,0,0,.65)'; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  const mins = Math.floor(elapsed / 60), secs = Math.floor(elapsed % 60);
+  ctx.fillStyle = '#ffd54a'; ctx.font = 'bold 56px monospace';
+  ctx.shadowColor = '#ffd54a'; ctx.shadowBlur = 30;
+  ctx.fillText('MENANG! 🏆', W/2, 200); ctx.shadowBlur = 0;
+  ctx.fillStyle = '#fff'; ctx.font = '22px monospace';
+  ctx.fillText('Semua koin: ' + totalCoins, W/2, 260);
+  ctx.fillText('Waktu: ' + mins + 'm ' + secs + 's', W/2, 296);
+  ctx.fillText('Mati: ' + deaths + '×', W/2, 332);
+  ctx.fillStyle = '#9ad1ff'; ctx.font = '18px monospace';
+  ctx.fillText('klik / tap buat main lagi', W/2, 400);
+  if (state === 'win') {} // click handled globally? add:
+}
+
+cv.addEventListener('pointerdown', e => { if (state === 'win') startRun(); });
+window.addEventListener('keydown', e => { if (state === 'win' && (e.code === 'Space' || e.code === 'Enter')) startRun(); });
+
+// trail recorder
+setInterval(() => {
+  if (state === 'play') { P.trail.push({x:P.x, y:P.y}); if (P.trail.length > 6) P.trail.shift(); }
+}, 40);
+
+// ------------------------------------------------ loop
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(33, now - last); last = now;
+  if (state === 'title') {
+    // idle demo camera drift
+  } else update(dt);
+  updateParticles();
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
