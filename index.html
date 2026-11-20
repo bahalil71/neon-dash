@@ -33,7 +33,7 @@
 // ============================================================ Neon Dash
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
-const W = 960, H = 540;
+const W = 1280, H = 720;
 let scale = 1;
 function fit() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -50,7 +50,7 @@ if (isTouch) document.getElementById('touch').style.display = 'block';
 // ------------------------------------------------ levels (tile maps)
 // # solid  = coin  ^ spike  o start  D door  x enemy  - crumble? (not used)  P platform
 const LEVELS = [
- { name:"Purple Dusk", sky:["#2a1a4a","#120a24"], ground:"#3d2a6e", glow:"#b06cff", accent:"#ffd54a",
+ { name:"Emerald Night", sky:["#0d3324","#04120c"], ground:"#1e5e3e", glow:"#4aff9a", accent:"#ffd54a",
    map:[
    "                                                                ",
    "                                                                ",
@@ -64,7 +64,7 @@ const LEVELS = [
    " #####   ##  ^   ###  ^  ######   ###   ######  ^^  ##  ####    ",
    "#####^^###^^#####^#####^########^^#####^#####^^##^^#############" ],
  },
- { name:"Deep Blue", sky:["#0d1b3d","#060a18"], ground:"#1e3a6e", glow:"#4ab8ff", accent:"#ffd54a",
+ { name:"Teal Deep Woods", sky:["#0a2e3d","#041018"], ground:"#1e5e5e", glow:"#4adfff", accent:"#ffd54a",
    map:[
    "                                                                ",
    "                                                                ",
@@ -78,7 +78,7 @@ const LEVELS = [
    " #### ^^ ### ^^ ###  ###  ####  ## ###  ^## ^## #### ^^ #####   ",
    "#####################^####^#####^^##############^####^^#########" ],
  },
- { name:"Magenta Dusk", sky:["#4a1030","#180612"], ground:"#7a1e4a", glow:"#ff5aa0", accent:"#ffd54a",
+ { name:"Golden Grove", sky:["#3d2e0a","#181004"], ground:"#6e5a1e", glow:"#ffd54a", accent:"#7dff9a",
    map:[
    "                                                                ",
    "          ==                  ==                                ",
@@ -92,7 +92,7 @@ const LEVELS = [
    " #### ^## ^ ############ #### ^## ^ #####  ^## ###^####^^####   ",
    "############^^#############^^##################^^###############" ],
  },
- { name:"Dark Red", sky:["#3d0d0d","#140404"], ground:"#6e1e1e", glow:"#ff4a4a", accent:"#ffd54a",
+ { name:"Crimson Woods", sky:["#3d0d14","#140408"], ground:"#5e2a2a", glow:"#ff6a4a", accent:"#ffd54a",
    map:[
    "                                                                ",
    "         ==         ==              ==                          ",
@@ -177,6 +177,9 @@ function loadLevel(i, keepStats) {
   const lv = LEVELS[i];
   const p = parseLevel(lv);
   solids = p.solids; spikes = p.spikes; enemies = p.enemies; door = p.door;
+  // grass tops: full tiles with no full tile directly above
+  const byXY = new Map(solids.filter(s => !s.thin).map(s => [s.x + ',' + s.y, s]));
+  for (const s of solids) if (!s.thin) s.grass = !byXY.has(s.x + ',' + (s.y - TILE));
   coins = p.coins.map(c => ({...c, taken:false, t:Math.random()*6}));
   coinTotal = coins.length; coinCount = 0;
   levelW = Math.max(...L ? L : []) || 0; // unused
@@ -341,33 +344,80 @@ function rr(x, y, w, h, r) {
   ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath();
 }
 
+// deterministic hash for scenery
+function hsh(n) { const s = Math.sin(n * 127.1) * 43758.5453; return s - Math.floor(s); }
+
+function drawTrees(lv, par, dens, color, baseY) {
+  const spacing = 150 / dens;
+  const first = Math.floor((cam.x * par - 100) / spacing) - 1;
+  const count = Math.ceil(W / spacing) + 3;
+  ctx.fillStyle = color;
+  for (let i = first; i < first + count; i++) {
+    const x = i * spacing - cam.x * par;
+    const hgt = 140 + hsh(i * 3.7 + levelIdx * 11) * 260;
+    const wdt = 60 + hsh(i * 9.1 + levelIdx) * 60;
+    // trunk
+    ctx.fillRect(x - 7, baseY - hgt * 0.25, 14, hgt * 0.25);
+    // 3 stacked triangles
+    for (let t = 0; t < 3; t++) {
+      const tw = wdt * (1 - t * 0.22);
+      const ty = baseY - hgt * 0.2 - t * hgt * 0.26;
+      const th = hgt * 0.34;
+      ctx.beginPath();
+      ctx.moveTo(x, ty - th);
+      ctx.lineTo(x - tw / 2, ty);
+      ctx.lineTo(x + tw / 2, ty);
+      ctx.fill();
+    }
+  }
+}
+
+function drawFireflies(lv) {
+  const n = 34;
+  const now = performance.now() / 1000;
+  for (let i = 0; i < n; i++) {
+    const bx = hsh(i * 17.3 + levelIdx * 5) * levelW;
+    const by = 60 + hsh(i * 7.7 + levelIdx) * (worldH - 120);
+    const fx = bx + Math.sin(now * 0.5 + i * 2.1) * 46;
+    const fy = by + Math.cos(now * 0.4 + i * 1.7) * 30;
+    if (fx - cam.x < -30 || fx - cam.x > W + 30) continue;
+    const glow = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(now * 2.2 + i * 3.3));
+    const rr2 = ctx.createRadialGradient(fx, fy, 0, fx, fy, 9);
+    rr2.addColorStop(0, `rgba(220,255,160,${0.9 * glow})`);
+    rr2.addColorStop(1, 'rgba(220,255,160,0)');
+    ctx.fillStyle = rr2;
+    ctx.fillRect(fx - 9, fy - 9, 18, 18);
+    ctx.fillStyle = `rgba(240,255,200,${glow})`;
+    ctx.beginPath(); ctx.arc(fx, fy, 1.6, 0, 7); ctx.fill();
+  }
+}
+
 function draw() {
   const lv = LEVELS[Math.min(levelIdx, LEVELS.length-1)];
   // sky
   const g = ctx.createLinearGradient(0, 0, 0, H);
   g.addColorStop(0, lv.sky[0]); g.addColorStop(1, lv.sky[1]);
   ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  // stars
-  ctx.fillStyle = '#ffffff';
-  for (let i = 0; i < 60; i++) {
-    const sx = ((i * 137.5 + levelIdx * 53) % (W + 40)) - cam.x * 0.2;
-    const sy = (i * 79.3) % (H * 0.55);
-    ctx.globalAlpha = 0.25 + 0.35 * Math.sin(i * 3.7 + performance.now() / 900);
-    ctx.fillRect(((sx % W) + W) % W, sy, 2, 2);
-  }
+  // soft moon glow
+  ctx.fillStyle = lv.glow; ctx.globalAlpha = 0.75;
+  ctx.beginPath(); ctx.arc(W - 170 - cam.x*0.06, 110, 34, 0, 7); ctx.fill();
+  ctx.globalAlpha = 0.14;
+  ctx.beginPath(); ctx.arc(W - 170 - cam.x*0.06, 110, 70, 0, 7); ctx.fill();
   ctx.globalAlpha = 1;
-  // moon
-  ctx.fillStyle = lv.glow; ctx.globalAlpha = 0.9;
-  ctx.beginPath(); ctx.arc(W - 130 - cam.x*0.1, 90, 38, 0, 7); ctx.fill();
-  ctx.globalAlpha = 0.18;
-  ctx.beginPath(); ctx.arc(W - 130 - cam.x*0.1, 90, 60, 0, 7); ctx.fill();
-  ctx.globalAlpha = 1;
+
+  // ---- forest backdrop: two parallax pine layers + undergrowth fill
+  const OY = (H - worldH) / 2;
+  const base = worldH + OY;
+  ctx.fillStyle = '#02120a';
+  ctx.fillRect(0, base - 6, W, H - base + 6);
+  drawTrees(lv, 0.30, 0.45, '#062e1c', base - 40);
+  drawTrees(lv, 0.55, 0.75, '#041f12', base - 10);
 
   if (state === 'title') { drawTitle(lv); return; }
 
   ctx.save();
   if (shake > 0) { ctx.translate((Math.random()-0.5)*shake, (Math.random()-0.5)*shake); shake *= 0.85; }
-  ctx.translate(-cam.x, 0);
+  ctx.translate(-cam.x, OY);
 
   // solids
   for (const s of solids) {
@@ -380,8 +430,19 @@ function draw() {
     } else {
       ctx.fillStyle = lv.ground;
       ctx.fillRect(s.x, s.y, s.w, s.h);
-      ctx.fillStyle = 'rgba(255,255,255,.14)';
-      ctx.fillRect(s.x, s.y, s.w, 4);
+      if (s.grass) {
+        ctx.fillStyle = lv.glow;
+        ctx.globalAlpha = 0.85;
+        ctx.fillRect(s.x, s.y, s.w, 7);
+        ctx.globalAlpha = 0.35;
+        for (let b = 0; b < 4; b++) {
+          const bx = s.x + 4 + b * 11 + Math.sin(s.x + b) * 2;
+          ctx.fillRect(bx, s.y - 6 - (b % 2) * 3, 3, 8);
+        }
+        ctx.globalAlpha = 1;
+      }
+      ctx.fillStyle = 'rgba(255,255,255,.10)';
+      ctx.fillRect(s.x, s.y + (s.grass ? 7 : 0), s.w, 3);
       ctx.fillStyle = 'rgba(0,0,0,.25)';
       ctx.fillRect(s.x, s.y + s.h - 5, s.w, 5);
     }
@@ -421,6 +482,8 @@ function draw() {
     ctx.beginPath(); ctx.ellipse(0, 0, 9 * Math.abs(Math.cos(c.t * 0.7)) + 3, 11, 0, 0, 7); ctx.stroke();
     ctx.restore();
   }
+  // fireflies (world space, above coins layer)
+  drawFireflies(lv);
   // enemies
   for (const e of enemies) {
     if (e.x - cam.x < -60 || e.x - cam.x > W + 60) continue;
@@ -464,6 +527,12 @@ function draw() {
     ctx.fillStyle = '#c8d0ff';
     ctx.fillRect(-10, -4 + (P.grounded ? ph : 0), 8, 6);
     ctx.fillRect(2, -4 + (P.grounded ? -ph : 0), 8, 6);
+    // leaf sprout on the head
+    ctx.fillStyle = lv.glow;
+    ctx.beginPath(); ctx.ellipse(-3, -P.h - 5, 8, 4, -0.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(5, -P.h - 7, 6, 3.4, 0.4, 0, 7); ctx.fill();
+    ctx.fillStyle = '#2a5a3a';
+    ctx.fillRect(-1, -P.h - 6, 2, 7);
     ctx.restore();
   }
   // particles
